@@ -1,39 +1,89 @@
 import { Booking } from '../models/Booking.js';
+import Joi from 'joi';
 
-// TODO: write a validation schema for create/update per README.md section 2.
+const createSchema = Joi.object({
+  roomNumber: Joi.string().required(),
+  startDate:  Joi.date().required(),
+  endDate:    Joi.date().greater(Joi.ref('startDate')).required(),
+  purpose:    Joi.string().allow('', null),
+  bookedBy:   Joi.string().hex().length(24)
+});
 
-// TODO: per README.md section 4, you will need a way to detect whether a
-// proposed booking conflicts with an existing one on the same room.
+const updateSchema = Joi.object({
+  roomNumber: Joi.string(),
+  startDate:  Joi.date(),
+  endDate:    Joi.date().greater(Joi.ref('startDate')),
+  purpose:    Joi.string().allow('', null),
+  bookedBy:   Joi.string().hex().length(24)
+}).min(1);
 
-// GET /api/bookings
-// TODO: implement per README.md section 3.
+async function hasConflict({ roomNumber, startDate, endDate, excludeId }) {
+  const query = {
+    roomNumber,
+    startDate: { $lt: endDate },  
+    endDate:   { $gt: startDate }  
+  };
+  if (excludeId) query._id = { $ne: excludeId };
+
+  const clash = await Booking.findOne(query);
+  return clash;
+}
+
+
 export async function getAllBookings(req, res, next) {
   try {
-    // TODO
+    const bookings = await Booking.find()
+      .sort({ startDate: 1 })
+      .populate('bookedBy', 'name email');
+    res.json({ bookings });
   } catch (err) { next(err); }
 }
 
-// GET /api/bookings/:id
-// TODO: implement per README.md sections 3 and 5.
+
 export async function getBooking(req, res, next) {
   try {
-    // TODO
+    const booking = await Booking.findById(req.params.id)
+      .populate('bookedBy', 'name email');
+    if (!booking) return res.status(404).json({ message: 'Booking not found' });
+    res.json({ booking });
   } catch (err) { next(err); }
 }
 
-// POST /api/bookings
-// TODO: implement per README.md sections 3 and 4.
+
 export async function createBooking(req, res, next) {
   try {
-    // TODO
+    const { value, error } = createSchema.validate(req.body, { abortEarly: false, stripUnknown: true });
+    if (error) return res.status(400).json({ message: error.message });
+    const clash = await hasConflict({
+    roomNumber: value.roomNumber,
+    startDate:  value.startDate,
+    endDate:    value.endDate
+    });
+    if (clash) return res.status(409).json({ message: 'Room already booked for that time range' });
+    const booking = await Booking.create(value);
+    res.status(201).json({ booking });
   } catch (err) { next(err); }
 }
 
-// PATCH /api/bookings/:id
-// TODO: implement per README.md sections 3, 4, and 5.
+
 export async function updateBooking(req, res, next) {
   try {
-    // TODO
+    const { value, error } = updateSchema.validate(req.body, { abortEarly: false, stripUnknown: true });
+    if (error) return res.status(400).json({ message: error.message });
+
+    const existing = await Booking.findById(req.params.id);
+    if (!existing) return res.status(404).json({ message: 'Booking not found' });
+    const roomNumber = value.roomNumber ?? existing.roomNumber;
+    const startDate  = value.startDate  ?? existing.startDate;
+    const endDate    = value.endDate    ?? existing.endDate;
+    const clash = await hasConflict({ roomNumber, startDate, endDate, excludeId: existing._id });
+    if (clash) return res.status(409).json({ message: 'Room already booked for that time range' });
+    const booking = await Booking.findByIdAndUpdate(
+      req.params.id,
+      { $set: value },
+      { new: true, runValidators: true }
+    ).populate('bookedBy', 'name email');
+    res.json({ booking });
   } catch (err) { next(err); }
 }
 
@@ -41,6 +91,8 @@ export async function updateBooking(req, res, next) {
 // TODO: implement per README.md sections 3 and 5.
 export async function deleteBooking(req, res, next) {
   try {
-    // TODO
+     const booking = await Booking.findById(req.params.id);
+      if (!booking) return res.status(404).json({ message: 'Booking not found' });
+      await booking.deleteOne();
   } catch (err) { next(err); }
 }
